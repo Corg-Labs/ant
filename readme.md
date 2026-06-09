@@ -1,152 +1,233 @@
-# Langton's Ant
+# Langton's Ant in C
 
-Langton's ant cellular automaton, in C.
+A Turing-complete cellular automaton — Langton's Ant — rendered at true color via SDL2 on a toroidal grid.
 
-A small, self-contained demo written in **pure C** — no external libraries,
-just the standard library and POSIX. Part of the [Corg-Labs](https://github.com/Corg-Labs)
-collection of single-file C programs.
+The ant follows two simple rules (turn right on white, turn left on black, flip the cell, step forward) yet produces emergent chaotic growth that eventually self-organizes into a repeating "highway" pattern after ~10,000 steps.
 
 ---
 
-## How It Works
+# Features
 
-1. The ant turns right on a white cell, left on a black cell
-2. It flips the cell's color, then steps forward
-3. Order emerges into a 'highway' after ~10,000 steps
-4. A live counter tracks the number of steps taken
+- Turing-complete four-rule cellular automaton
+- Emergent self-organization from chaotic to periodic behavior
+- Seamless toroidal wraparound on all four edges
+- True 24‑bit color pixel rendering via SDL2 framebuffer
+- 120 × 80 grid at 8 px per cell — 960 × 640 window
+- 200 simulation steps per frame at ~60 fps
+- Live step counter in window title
+- Keyboard quit handling (ESC / Q)
+- Written entirely in C
 
 ---
 
-# Tutorial
+# How It Works
 
-This walkthrough explains every moving part of `ant.c` — from the grid and
-direction tables right through to the terminal-rendering loop.
+A virtual "ant" walks a 2‑D grid of cells. Each cell is either white or black. The ant reads the color of the cell it stands on, turns accordingly, flips the cell's color, and steps forward. Despite the simplicity of the rules, the ant's trajectory is chaotic for thousands of steps before spontaneously locking into a repeating diagonal highway.
 
-## 1. The Grid and Its Constants
+Each frame batches 200 simulation ticks, then redraws every cell as a colored square in an SDL2 pixel buffer. The ant is rendered as a red 5×5 dot on top.
 
-The entire playing field is a single 2-D integer array where `0` means white
-and `1` means black:
+---
+
+# Tutorial / Cellular Automaton Breakdown
+
+## 1. The Grid
+
+The world is a fixed-size 2‑D integer array where `0` = white and `1` = black:
 
 ```c
-#define W 80
-#define H 40
+#define GRID_W    120
+#define GRID_H    80
 
-static int grid[H][W];
+static int grid[GRID_H][GRID_W];
 memset(grid, 0, sizeof(grid));
 ```
 
-`W` and `H` set the terminal dimensions. `memset` zeroes the whole grid so
-every cell starts white.
+All cells start white. The grid is **toroidal** — stepping off one edge wraps around to the opposite side.
 
-## 2. Ant State and Direction Encoding
+---
 
-The ant is represented by three variables: its column `ax`, its row `ay`, and a
-facing direction `dir` encoded as an integer (0 = up, 1 = right, 2 = down,
-3 = left):
+## 2. The Ant State
+
+The ant is three variables: its column `ax`, its row `ay`, and a direction `dir` encoded as `0` = up, `1` = right, `2` = down, `3` = left:
 
 ```c
-int ax = W/2, ay = H/2, dir = 0;   /* 0=up,1=right,2=down,3=left */
-int dx[4] = {0, 1, 0, -1};
-int dy[4] = {-1, 0, 1, 0};
+int ax = GRID_W / 2, ay = GRID_H / 2, dir = 0;
+
+int dx[4] = { 0, 1, 0, -1 };
+int dy[4] = { -1, 0, 1, 0 };
 ```
 
-`dx` and `dy` are parallel look-up tables: index them with `dir` to get the
-column and row delta for a single forward step.
+Indexing `dx[dir]` and `dy[dir]` gives the column and row delta for one forward step.
 
-## 3. Applying the Langton's Ant Rules
+---
 
-Each tick the ant examines the cell it currently stands on, turns, flips the
-cell, and moves forward:
+## 3. The Four Rules
+
+Every tick the ant reads the current cell, turns, flips it, and advances:
 
 ```c
-if (grid[ay][ax]) { dir = (dir+3)%4; grid[ay][ax] = 0; }
-else              { dir = (dir+1)%4; grid[ay][ax] = 1; }
-ax = (ax + dx[dir] + W) % W;
-ay = (ay + dy[dir] + H) % H;
+if (grid[ay][ax]) {          /* black cell */
+    dir = (dir + 3) & 3;     /* turn left  (three right-turns ≡ left) */
+    grid[ay][ax] = 0;        /* flip to white */
+} else {                      /* white cell */
+    dir = (dir + 1) & 3;     /* turn right */
+    grid[ay][ax] = 1;        /* flip to black */
+}
+
+ax = (ax + dx[dir] + GRID_W) % GRID_W;   /* step with toroidal wrap */
+ay = (ay + dy[dir] + GRID_H) % GRID_H;
 steps++;
 ```
 
-`(dir+1)%4` turns right; `(dir+3)%4` is equivalent to turning left (three
-right-turns). The `+W`/`+H` trick before the modulo keeps the result positive
-even when the ant walks off a negative edge, giving seamless wraparound on all
-four sides.
+`(dir + 1) & 3` rotates clockwise; `(dir + 3) & 3` rotates counter‑clockwise (bitwise‑and with 3 is equivalent to `% 4` but faster). The `+ GRID_W` / `+ GRID_H` before the modulo guarantees a non‑negative result when walking off a negative edge.
 
-## 4. Batching Steps for Smooth Animation
+---
 
-Rather than redrawing after every single step (which would make the display
-flicker and stall), the inner loop advances the simulation 150 ticks before
-each render:
+## 4. Batching for Smooth Animation
+
+Instead of redrawing after every tick, the inner loop accumulates 200 steps before each frame:
 
 ```c
-for (int k = 0; k < 150 && running; k++) {
-    /* ... rules from step 3 ... */
+for (int k = 0; k < 200 && running; k++) {
+    /* rules from step 3 */
 }
 ```
 
-150 iterations per frame at a 20 ms sleep (`usleep(20000)`) gives ~7,500
-simulation steps per second while keeping CPU usage low.
+200 ticks per frame at a 16 ms cap gives ~12,500 simulation steps per second while keeping the display smooth at ~60 fps.
 
-## 5. Terminal Rendering with ANSI Escape Codes
+---
 
-Before the main loop the cursor is hidden and the screen cleared:
+## 5. SDL2 Pixel-Buffer Rendering
+
+Each grid cell is drawn as an `CELL × CELL` (8 × 8) pixel block. The surface is written directly:
 
 ```c
-printf("\033[2J\033[?25l");
+for (int y = 0; y < GRID_H; y++) {
+    for (int x = 0; x < GRID_W; x++) {
+        Uint32 color = grid[y][x] ? col_black : col_white;
+        for (int py = 0; py < CELL; py++)
+            for (int px = 0; px < CELL; px++)
+                pixels[(y * CELL + py) * pitch + (x * CELL + px)] = color;
+    }
+}
 ```
 
-At the start of every frame the cursor jumps back to the top-left corner
-instead of clearing the screen again — that prevents flicker:
+The ant is overlaid as a 5×5 red dot at its current grid position:
 
 ```c
-printf("\033[H");
+int ant_cx = ax * CELL + CELL / 2;
+int ant_cy = ay * CELL + CELL / 2;
+for (int py = -2; py <= 2; py++)
+    for (int px = -2; px <= 2; px++)
+        if (sx in bounds) pixels[sy * pitch + sx] = col_ant;
 ```
 
-Each cell is then printed as one character: `'@'` for the ant's current
-position, `'#'` for a black cell, and `' '` (space) for a white cell:
+This gives **true 24‑bit color** — no ASCII quantization, no palette limits.
+
+---
+
+## 6. Color Palette
+
+Three pre-computed colors define the visual:
+
+| Element  | RGB         | Role          |
+|----------|-------------|---------------|
+| White    | 240, 230, 210 | Warm paper background |
+| Black    |  30,  30,  38 | Near‑black slate   |
+| Ant      | 220,  50,  50 | Bright red marker  |
+
+---
+
+## 7. Frame Timing and Window Title
+
+A 60 fps cap prevents busy-waiting:
 
 ```c
-if (x == ax && y == ay) putchar('@');
-else putchar(grid[y][x] ? '#' : ' ');
+Uint32 elapsed = SDL_GetTicks() - frame_start;
+if (elapsed < 16) SDL_Delay(16 - elapsed);
 ```
 
-## 6. The Step Counter and Graceful Shutdown
-
-A `long` counter accumulates the total number of rule applications and is
-displayed below the grid each frame:
+The window title updates every frame with the cumulative step count:
 
 ```c
-printf("steps: %ld   (Ctrl-C to quit)", steps);
-```
-
-A `SIGINT` handler (Ctrl-C) flips a `volatile` flag so both the inner and
-outer loops exit cleanly:
-
-```c
-static volatile int running = 1;
-static void stop(int s) { (void)s; running = 0; }
-```
-
-On exit, the terminal is restored — SGR reset, cursor re-enabled, screen
-cleared:
-
-```c
-printf("\033[0m\033[?25h\033[2J\033[H");
+snprintf(title, sizeof title, "Langton's Ant — %ld steps", steps);
+SDL_SetWindowTitle(win, title);
 ```
 
 ---
 
-## Build
+# Build
 
 ```
-gcc ant.c -o ant
+git clone <this-repo>
+cd ant
+make
 ```
 
-## Run
+Or manually:
+
+```
+gcc ant.c -o ant $(sdl2-config --cflags --libs)
+```
+
+**Dependencies:** SDL2 and a C compiler (`gcc`/`clang`).
+
+Install SDL2 via Homebrew:
+
+```
+brew install sdl2
+```
+
+Or apt:
+
+```
+sudo apt install libsdl2-dev
+```
+
+---
+
+# Run
 
 ```
 ./ant
 ```
 
-## Controls
+Controls:
+- **ESC** or **Q** — quit
 
-Press **Ctrl-C** to quit.
+The ant starts at the center of a 120 × 80 toroidal grid. After a chaotic phase of ~10,000 steps it spontaneously forms a diagonal highway.
+
+---
+
+# Customizing
+
+Edit the constants at the top of `ant.c`:
+
+- `GRID_W`, `GRID_H` — grid dimensions (larger = more patterns visible)
+- `CELL` — pixel size per grid cell (larger = blockier look)
+- Color values (`col_white`, `col_black`, `col_ant`) — any RGB triple
+- Batch size (the `200` in the inner loop) — higher = faster simulation
+
+---
+
+# Concepts Practiced
+
+- Turing-complete cellular automata
+- Langton's Ant four-rule state machine
+- Emergent self-organization (chaos → highway)
+- Toroidal grid with modular wraparound
+- Direction encoding via lookup tables
+- SDL2 surface/pixel-buffer graphics
+- True-color 24-bit framebuffer rendering
+- Real-time animation with batched simulation steps
+- Event-driven windowing and keyboard input
+- Frame-rate capping with adaptive delay
+
+---
+
+# Dependencies
+
+- `SDL.h` — window management and pixel-buffer rendering
+- `stdio.h` — `stderr` diagnostics, `snprintf`
+- `stdlib.h` — `NULL`, `EXIT_*` macros
+- `string.h` — `memset`
